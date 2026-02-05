@@ -6,9 +6,53 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Decision Transformer는 강화학습을 시퀀스 모델링 문제로 재구성한 연구 프로젝트입니다. GPT 아키텍처를 사용하여 (return-to-go, state, action) 시퀀스를 모델링하고, 원하는 return을 조건으로 하여 행동을 예측합니다.
 
+```mermaid
+flowchart LR
+    subgraph Traditional["🔄 기존 RL"]
+        direction TB
+        T1["State s"] --> T2["Policy π(s)"]
+        T2 --> T3["Action a"]
+        T3 --> T4["Reward r"]
+        T4 --> T5["Bellman Update"]
+        T5 -.-> T2
+    end
+
+    subgraph DT["🤖 Decision Transformer"]
+        direction TB
+        D1["Target Return R̂"] --> D4
+        D2["State s"] --> D4["Transformer"]
+        D3["Past Actions"] --> D4
+        D4 --> D5["Action a"]
+    end
+
+    Traditional -.->|"패러다임 전환"| DT
+
+    style Traditional fill:#ffebee
+    style DT fill:#e3f2fd
+```
+
 이 저장소는 두 개의 독립적인 실험 환경을 포함합니다:
-- `atari/`: Atari 게임 환경 (DQN-replay 데이터셋 기반)
-- `gym/`: OpenAI Gym 환경 (D4RL 데이터셋 기반, MuJoCo 필요)
+
+```mermaid
+flowchart TB
+    subgraph Root["📁 decision-transformer"]
+        direction LR
+        subgraph Atari["🎮 atari/"]
+            A1["DQN-replay 데이터셋"]
+            A2["minGPT 기반 구현"]
+            A3["이미지 입력 (84×84×4)"]
+        end
+
+        subgraph Gym["🤸 gym/"]
+            G1["D4RL 데이터셋"]
+            G2["HuggingFace GPT-2 기반"]
+            G3["연속 상태 벡터 입력"]
+        end
+    end
+
+    style Atari fill:#fff3e0
+    style Gym fill:#e8f5e9
+```
 
 ## Development Commands
 
@@ -89,6 +133,37 @@ python experiment.py --env hopper --dataset medium --model_type dt -w True
 ### Core Sequence Modeling Approach
 
 Decision Transformer는 기존 RL의 벨만 방정식 대신 autoregressive sequence modeling을 사용합니다:
+
+```mermaid
+flowchart LR
+    subgraph Input["📥 입력 시퀀스"]
+        R1["R̂₁"] --> S1["s₁"] --> A1["a₁"]
+        R2["R̂₂"] --> S2["s₂"] --> A2["a₂"]
+        R3["R̂₃"] --> S3["s₃"] --> A3["?"]
+    end
+
+    subgraph Process["🧠 처리"]
+        Input --> TF["GPT-2<br/>Transformer"]
+        TF --> CM["Causal Masking<br/>(미래 토큰 차단)"]
+    end
+
+    subgraph Output["📤 출력"]
+        CM --> Pred["State 위치에서<br/>Action 예측"]
+        Pred --> A3_pred["a₃ 예측"]
+    end
+
+    style R1 fill:#ffcdd2
+    style R2 fill:#ffcdd2
+    style R3 fill:#ffcdd2
+    style S1 fill:#c8e6c9
+    style S2 fill:#c8e6c9
+    style S3 fill:#c8e6c9
+    style A1 fill:#bbdefb
+    style A2 fill:#bbdefb
+    style A3 fill:#fff9c4
+```
+
+**핵심 개념:**
 - 입력: `(R_1, s_1, a_1, R_2, s_2, a_2, ...)` 형태의 시퀀스
 - R은 returns-to-go (미래 누적 보상)
 - GPT-2 기반 transformer가 state에서 action을 예측
@@ -96,42 +171,116 @@ Decision Transformer는 기존 RL의 벨만 방정식 대신 autoregressive sequ
 
 ### Key Components
 
-**Atari 구현 (`atari/`)**:
-- `mingpt/`: minGPT 기반 transformer 구현
-  - `model_atari.py`: GPT 모델, reward-conditioned 및 naive 모드 지원
-  - `trainer_atari.py`: 학습 루프 및 체크포인팅
-- `run_dt_atari.py`: 메인 학습 스크립트
-- `create_dataset.py`: DQN-replay 버퍼에서 데이터셋 생성
-- `fixed_replay_buffer.py`: Atari replay 버퍼 로딩 유틸리티
+```mermaid
+flowchart TB
+    subgraph Atari["🎮 Atari 구현 (atari/)"]
+        direction TB
+        AM["mingpt/"]
+        AM --> AM1["model_atari.py<br/>GPT 모델"]
+        AM --> AM2["trainer_atari.py<br/>학습 루프"]
 
-**Gym 구현 (`gym/`)**:
-- `decision_transformer/models/`:
-  - `decision_transformer.py`: 메인 DT 모델, GPT-2를 사용한 (R,s,a) 시퀀스 모델링
-  - `trajectory_gpt2.py`: Huggingface GPT-2에서 위치 임베딩 제거한 커스텀 구현
-  - `model.py`: TrajectoryModel 추상 베이스 클래스
-  - `mlp_bc.py`: Behavior Cloning 베이스라인
-- `decision_transformer/training/`:
-  - `seq_trainer.py`: Decision Transformer용 시퀀스 트레이너
-  - `act_trainer.py`: BC 모델용 트레이너
-  - `trainer.py`: 베이스 트레이너 클래스
-- `decision_transformer/evaluation/`:
-  - `evaluate_episodes.py`: 에피소드 평가 및 return 조건부 평가
-- `experiment.py`: 메인 실험 스크립트, 데이터셋 로딩, 학습, 평가 조율
+        AR["run_dt_atari.py<br/>메인 스크립트"]
+        AD["create_dataset.py<br/>데이터셋 생성"]
+        AB["fixed_replay_buffer.py<br/>버퍼 로딩"]
+    end
+
+    subgraph Gym["🤸 Gym 구현 (gym/)"]
+        direction TB
+        subgraph Models["models/"]
+            GM1["decision_transformer.py<br/>메인 DT 모델"]
+            GM2["trajectory_gpt2.py<br/>커스텀 GPT-2"]
+            GM3["mlp_bc.py<br/>BC 베이스라인"]
+        end
+
+        subgraph Training["training/"]
+            GT1["seq_trainer.py<br/>DT 트레이너"]
+            GT2["act_trainer.py<br/>BC 트레이너"]
+        end
+
+        subgraph Eval["evaluation/"]
+            GE1["evaluate_episodes.py<br/>에피소드 평가"]
+        end
+
+        GX["experiment.py<br/>메인 실험 스크립트"]
+    end
+
+    style Atari fill:#fff3e0
+    style Gym fill:#e8f5e9
+```
 
 ### Data Processing
 
-**Atari**:
-- DQN-replay 버퍼 사용 (각 게임당 50개 버퍼)
-- 각 버퍼에서 궤적 샘플링 후 (s, a, rtg) 시퀀스 구성
-- 이미지 프레임 스택 (4 frames × 84×84)을 평탄화하여 입력
+```mermaid
+flowchart TB
+    subgraph AtariData["🎮 Atari 데이터 처리"]
+        AD1["DQN-replay 버퍼<br/>(50개/게임)"] --> AD2["궤적 샘플링"]
+        AD2 --> AD3["프레임 스택<br/>(4×84×84)"]
+        AD3 --> AD4["(s, a, rtg) 시퀀스"]
+    end
 
-**Gym**:
-- D4RL 데이터셋을 pickle 형식으로 변환 (`data/[env]-[dataset]-v2.pkl`)
-- State 정규화: 전체 데이터셋 평균/표준편차 사용
-- Returns-to-go: discount cumulative sum으로 계산
-- Context length K만큼의 과거 시퀀스 사용 (K=20 기본값)
+    subgraph GymData["🤸 Gym 데이터 처리"]
+        GD1["D4RL 데이터셋"] --> GD2["Pickle 변환<br/>(env-dataset-v2.pkl)"]
+        GD2 --> GD3["State 정규화<br/>(평균/표준편차)"]
+        GD3 --> GD4["RTG 계산<br/>(discount cumsum)"]
+        GD4 --> GD5["Context K 추출<br/>(기본 K=20)"]
+    end
+
+    style AtariData fill:#fff3e0
+    style GymData fill:#e8f5e9
+```
 
 ### Model Details
+
+**Decision Transformer 아키텍처:**
+
+```mermaid
+flowchart TB
+    subgraph Inputs["📥 입력"]
+        RTG["RTG<br/>(batch, K, 1)"]
+        State["State<br/>(batch, K, state_dim)"]
+        Action["Action<br/>(batch, K, act_dim)"]
+        Time["Timestep<br/>(batch, K)"]
+    end
+
+    subgraph Embedding["1️⃣ 임베딩"]
+        RTG --> |"Linear"| RE["RTG Emb"]
+        State --> |"Linear"| SE["State Emb"]
+        Action --> |"Linear"| AE["Action Emb"]
+        Time --> |"Embedding"| TE["Time Emb"]
+
+        RE --> |"+"| REF["R + T"]
+        TE --> REF
+        SE --> |"+"| SEF["S + T"]
+        TE --> SEF
+        AE --> |"+"| AEF["A + T"]
+        TE --> AEF
+    end
+
+    subgraph Stack["2️⃣ 시퀀스 구성"]
+        REF --> Interleave
+        SEF --> Interleave
+        AEF --> Interleave
+        Interleave["Interleave<br/>[R,s,a,R,s,a,...]"] --> LN["LayerNorm"]
+    end
+
+    subgraph TF["3️⃣ Transformer"]
+        LN --> GPT["GPT-2<br/>(Causal Attention)"]
+        GPT --> Out["(batch, K×3, hidden)"]
+    end
+
+    subgraph Heads["4️⃣ 예측 헤드"]
+        Out --> |"[:, 1::3, :]"| PA["predict_action<br/>⭐ 주요 목표"]
+        Out --> |"[:, 2::3, :]"| PS["predict_state<br/>(미사용)"]
+        Out --> |"[:, 2::3, :]"| PR["predict_return<br/>(미사용)"]
+    end
+
+    style Inputs fill:#e1f5fe
+    style Embedding fill:#fff3e0
+    style Stack fill:#f3e5f5
+    style TF fill:#e8f5e9
+    style Heads fill:#ffebee
+    style PA fill:#c8e6c9,stroke:#2e7d32,stroke-width:3px
+```
 
 **시퀀스 구성** ([decision_transformer.py:73-78](gym/decision_transformer/models/decision_transformer.py#L73-L78)):
 ```python
@@ -149,7 +298,48 @@ Decision Transformer는 기존 RL의 벨만 방정식 대신 autoregressive sequ
 - `get_action()`: 현재까지의 궤적과 원하는 rtg를 받아 다음 action 반환
 - Max length로 컨텍스트 윈도우 제한, 패딩 처리
 
+### 학습 vs 추론 흐름
+
+```mermaid
+flowchart TB
+    subgraph Training["📚 학습 (Offline)"]
+        T1["과거 데이터셋<br/>(trajectories)"] --> T2["RTG 계산<br/>(실제 값)"]
+        T2 --> T3["(R, s, a) 시퀀스 구성"]
+        T3 --> T4["Transformer Forward"]
+        T4 --> T5["Action 예측"]
+        T5 --> T6["MSE Loss<br/>(예측 vs 실제)"]
+        T6 --> T7["Backprop"]
+    end
+
+    subgraph Inference["🎯 추론 (Online)"]
+        I1["목표 Return 설정<br/>(사용자 지정)"] --> I2["초기 RTG = 목표"]
+        I2 --> I3["현재 State 관측"]
+        I3 --> I4["Transformer로<br/>Action 예측"]
+        I4 --> I5["환경에서 실행"]
+        I5 --> I6["Reward 획득"]
+        I6 --> I7["RTG 업데이트<br/>(RTG -= reward)"]
+        I7 --> I3
+    end
+
+    Training --> |"학습된 모델"| Inference
+
+    style Training fill:#e3f2fd
+    style Inference fill:#fff8e1
+```
+
 ## Important Implementation Notes
+
+```mermaid
+flowchart LR
+    subgraph Notes["⚠️ 주의사항"]
+        N1["PYTHONPATH<br/>각 디렉토리 추가 필요"]
+        N2["실행 위치<br/>cd atari 또는 cd gym"]
+        N3["Context Length<br/>Atari: 30 / Gym: 20"]
+        N4["하이퍼파라미터<br/>환경별로 다름"]
+    end
+
+    style Notes fill:#fff3e0
+```
 
 - **PYTHONPATH 설정**: 각 디렉토리(`atari/`, `gym/`)를 PYTHONPATH에 추가해야 할 수 있음
 - **스크립트 실행 위치**: 항상 해당 하위 디렉토리에서 실행 (`cd atari` 또는 `cd gym`)
