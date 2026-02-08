@@ -360,6 +360,35 @@ flowchart TD
 
 2. **evaluate_episode** (BC용): 표준 평가
 
+```mermaid
+sequenceDiagram
+    participant E as 🎯 Eval
+    participant M as 🧠 Model
+    participant Env as 🤸 Hopper
+
+    Note over E: target_return = 3600
+
+    E->>M: get_action(state, rtg=3600)
+    M->>M: forward(state, actions, rtg)
+    M-->>E: action_pred
+
+    E->>Env: step(action_pred)
+    Env-->>E: state, reward=50, done=False
+
+    Note over E: rtg = 3600 - 50/1000 = 3590
+    Note over E: state를 history에 추가
+
+    alt done=False
+        E->>M: get_action(state, rtg=3590)
+        Note over M,Env: ...계속...
+    end
+
+    Note over Env: done=True
+    Note over E: episode_return 기록
+
+    Note over E: 10 에피소드 반복 후 평균 계산
+```
+
 ```python
 # RTG 업데이트 (evaluate_episode_rtg)
 pred_return = target_return[0,-1] - (reward/scale)
@@ -423,42 +452,99 @@ flowchart TD
 
 ### 6.1 Gym 실행 흐름
 
-```
-python experiment.py --env hopper --dataset medium --model_type dt
-         │
-         ↓
-1. 환경 설정 (env_targets, scale, max_ep_len)
-         ↓
-2. D4RL 데이터셋 로드 및 정규화
-         ↓
-3. DecisionTransformer 모델 초기화
-         ↓
-4. SequenceTrainer 초기화
-         ↓
-5. Training Loop:
-   for iter in range(max_iters):
-       trainer.train_iteration(num_steps_per_iter)
-       → get_batch() → forward → MSE loss → backprop
-       → eval_episodes(target) → episode return 측정
+```mermaid
+sequenceDiagram
+    participant User as 👤 사용자
+    participant Exp as experiment.py
+    participant Data as 📊 D4RL
+    participant Model as 🧠 DT Model
+    participant Trainer as 🎯 SeqTrainer
+    participant Eval as 📈 Evaluator
+
+    User->>Exp: python experiment.py --env hopper
+
+    Exp->>Exp: 환경 설정<br/>(targets, scale, max_ep_len)
+
+    Exp->>Data: load pickle<br/>(hopper-medium-v2.pkl)
+    Data-->>Exp: trajectories
+
+    Exp->>Exp: state 정규화<br/>(mean, std 계산)
+
+    Exp->>Model: DecisionTransformer()<br/>초기화
+    Model-->>Exp: model
+
+    Exp->>Trainer: SequenceTrainer(model)
+    Trainer-->>Exp: trainer
+
+    loop Training Loop
+        Trainer->>Trainer: get_batch()
+        Trainer->>Model: forward(states, actions, rtgs)
+        Model-->>Trainer: action_preds
+
+        Trainer->>Trainer: MSE loss(pred, target)
+        Trainer->>Trainer: backprop + update
+
+        Trainer->>Eval: eval_episodes(target=1800)
+        Eval-->>Trainer: avg_return
+    end
+
+    Trainer-->>User: 학습 완료!
 ```
 
 ### 6.2 Atari 실행 흐름
 
-```
-python run_dt_atari.py --game Breakout --model_type reward_conditioned
-         │
-         ↓
-1. create_dataset(): DQN replay buffers → (obss, actions, rtgs, timesteps)
-         ↓
-2. StateActionReturnDataset 생성
-         ↓
-3. GPT 모델 초기화 (6 layers, 8 heads, 128 dim)
-         ↓
-4. Trainer.train():
-   for epoch in range(epochs):
-       run_epoch('train')
-       → DataLoader → forward → Cross Entropy loss
-       get_returns(target): 실제 게임에서 평가
+```mermaid
+sequenceDiagram
+    participant User as 👤 사용자
+    participant Main as run_dt_atari.py
+    participant Data as create_dataset
+    participant Buffers as 📦 DQN Buffers
+    participant Model as 🧠 GPT Model
+    participant Trainer as 🎯 Trainer
+    participant Game as 🎮 Breakout
+
+    User->>Main: python run_dt_atari.py --game Breakout
+
+    Main->>Data: create_dataset(num_buffers=50)
+    Data->>Buffers: sample_transition_batch()
+
+    loop 궤적 샘플링
+        Buffers-->>Data: (states, actions, rewards)
+    end
+
+    Data->>Data: RTG 계산<br/>(후방 누적합)
+    Data-->>Main: (obss, actions, rtgs, timesteps)
+
+    Main->>Main: StateActionReturnDataset()
+
+    Main->>Model: GPT(vocab_size, block_size)
+    Model-->>Main: model (6 layers, 8 heads)
+
+    Main->>Trainer: Trainer(model, dataset)
+    Trainer-->>Main: trainer
+
+    loop Epochs
+        Trainer->>Trainer: run_epoch('train')
+
+        Trainer->>Trainer: DataLoader batch
+        Trainer->>Model: forward(states, actions, rtgs)
+        Model-->>Trainer: logits, loss
+
+        Trainer->>Trainer: backprop + update
+
+        Trainer->>Game: get_returns(target=90)
+
+        loop 10 에피소드
+            Game->>Model: sample(state, rtg)
+            Model-->>Game: action
+            Game->>Game: env.step(action)
+            Note over Game: rtg -= reward
+        end
+
+        Game-->>Trainer: avg_return
+    end
+
+    Trainer-->>User: 학습 완료!
 ```
 
 ---

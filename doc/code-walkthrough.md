@@ -785,32 +785,44 @@ def train(self):
 ### 5.1 평가 함수 - get_returns
 
 ```mermaid
-flowchart TD
-    Start([get_returns 호출]) --> InitEnv["Env 초기화<br/>Atari 게임"]
-    InitEnv --> InitRTG["rtgs = [target_return]<br/>예: 90 for Breakout"]
-    InitRTG --> FirstSample["sample()로 첫 action 예측"]
+sequenceDiagram
+    participant Main as 📱 Main
+    participant GetReturns as get_returns()
+    participant Env as 🎮 Atari Env
+    participant Sample as sample()
+    participant RTG as rtgs 배열
 
-    FirstSample --> EpisodeLoop["10 에피소드 반복"]
-    EpisodeLoop --> Reset["env.reset()"]
-    Reset --> StepLoop{Step Loop}
+    Main->>GetReturns: target=90
 
-    StepLoop -->|Not Done| ExecAction["env.step(action)"]
-    ExecAction --> GetReward["reward 획득"]
-    GetReward --> UpdateRTG["rtgs += [rtgs[-1] - reward]<br/>⭐ 핵심!"]
-    UpdateRTG --> ConcatStates["all_states에 state 추가"]
-    ConcatStates --> NextSample["sample()로 다음 action 예측"]
-    NextSample --> StepLoop
+    GetReturns->>Env: Env(args).eval()
+    Env-->>GetReturns: env
 
-    StepLoop -->|Done| AppendReturn["T_rewards.append(reward_sum)"]
-    AppendReturn --> MoreEpisodes{더 많은<br/>에피소드?}
-    MoreEpisodes -->|Yes| EpisodeLoop
-    MoreEpisodes -->|No| CalcMean["eval_return = mean(T_rewards)"]
-    CalcMean --> Print["print: target vs eval return"]
-    Print --> End([return eval_return])
+    GetReturns->>RTG: rtgs = [90]
 
-    style UpdateRTG fill:#ff6b6b
-    style NextSample fill:#4ecdc4
-    style CalcMean fill:#ffd93d
+    loop 10 에피소드
+        GetReturns->>Env: env.reset()
+        Env-->>GetReturns: state
+
+        GetReturns->>Sample: sample(model, state, rtgs=[90])
+        Sample-->>GetReturns: action
+
+        loop 스텝 진행
+            GetReturns->>Env: step(action)
+            Env-->>GetReturns: state, reward, done
+
+            alt done=False
+                GetReturns->>RTG: rtgs += [rtgs[-1] - reward]
+                Note over RTG: rtg = 90 - 5 = 85
+                GetReturns->>Sample: sample(model, all_states, actions, rtgs)
+                Sample-->>GetReturns: next_action
+            else done=True
+                GetReturns->>GetReturns: T_rewards.append(sum)
+            end
+        end
+    end
+
+    GetReturns->>Main: eval_return = mean(T_rewards)
+    Note over Main: target: 90, eval: 85
 ```
 
 ```python

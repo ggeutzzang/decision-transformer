@@ -427,6 +427,31 @@ print(f"\n첫 3개 reward: {traj['rewards'][:3]}")
 
 **목표**: DecisionTransformer 클래스 이해
 
+```mermaid
+sequenceDiagram
+    participant Code as 👀 독자
+    participant File as decision_transformer.py
+    participant Init as __init__
+    participant Forward as forward()
+    participant GetAction as get_action()
+
+    Code->>File: 파일 열기
+
+    Note over Code,File: 1단계: 클래스 구조 파악
+    Code->>Init: lines 10-50
+    Init-->>Code: 임베딩 레이어 확인<br/>(embed_timestep, embed_return,<br/>embed_state, embed_action)
+
+    Note over Code,File: 2단계: forward 함수 분석
+    Code->>Forward: lines 52-99
+    Forward-->>Code: 1. 각 입력 임베딩<br/>2. timestep 임베딩 추가<br/>3. 시퀀스 인터리빙<br/>4. Transformer 통과<br/>5. action 예측 추출
+
+    Note over Code,File: 3단계: get_action 함수 분석
+    Code->>GetAction: lines 103-140
+    GetAction-->>Code: 추론 시 action 획득<br/>- 히스토리 자르기<br/>- 패딩 처리<br/>- forward 호출<br/>- 마지막 action 반환
+
+    Note over Code: ✅ 모델 구조 이해 완료!
+```
+
 **읽을 파일**: `gym/decision_transformer/models/decision_transformer.py`
 
 **단계별 코드 읽기**:
@@ -524,6 +549,41 @@ python experiment.py \
 
 **목표**: RTG 조건부 추론 이해
 
+```mermaid
+sequenceDiagram
+    participant Code as 👀 독자
+    participant Eval as evaluate_episode_rtg
+    participant Model as get_action()
+    participant Env as 🤸 Hopper
+    participant RTG as RTG 변수
+
+    Note over Code: 파일: evaluate_episodes.py
+
+    Code->>Eval: 함수 읽기 시작
+
+    Eval->>RTG: target_return = 1800<br/>(초기 목표)
+
+    loop 에피소드 진행
+        Eval->>Model: get_action(state, rtg=target_return)
+        Model-->>Eval: action_pred
+
+        Eval->>Env: step(action_pred)
+        Env-->>Eval: state, reward, done
+
+        Eval->>RTG: pred_return = target_return - reward/scale
+        RTG-->>Eval: 새로운 RTG
+
+        Eval->>RTG: target_return = cat([old, new])
+        Note over RTG: RTG 배열 업데이트
+
+        alt done=True
+            Eval-->>Code: episode_return
+        end
+    end
+
+    Note over Code: ✅ RTG 동적 업데이트 이해!
+```
+
 **읽을 파일**: `gym/decision_transformer/evaluation/evaluate_episodes.py`
 
 **핵심 코드 분석**:
@@ -604,6 +664,43 @@ gsutil -m cp -R gs://atari-replay-datasets/dqn/Breakout dqn_replay/
 ### 4.2 데이터셋 생성 과정 이해
 
 **목표**: DQN replay buffer → RTG 데이터셋 변환 이해
+
+```mermaid
+sequenceDiagram
+    participant Code as 👀 독자
+    participant Create as create_dataset()
+    participant Buffer as FixedReplayBuffer
+    participant RTG as RTG 계산
+    participant Output as 출력
+
+    Note over Code: 파일: create_dataset.py
+
+    Code->>Create: 함수 호출
+
+    loop num_steps 달성할 때까지
+        Create->>Buffer: 랜덤 버퍼 선택
+        Buffer-->>Create: buffer_num
+
+        Create->>Buffer: sample_transition_batch()
+        Buffer-->>Create: (states, actions, rewards)
+
+        alt terminal=True
+            Create->>Create: done_idxs에 기록
+        end
+    end
+
+    Create->>RTG: 각 에피소드별 RTG 계산
+
+    Note over RTG: 역순 순회:
+    Note over RTG: for j in range(i-1, start-1, -1):
+    Note over RTG:     rtg[j] = sum(rewards[j:i])
+
+    RTG-->>Create: rtg 배열
+
+    Create->>Output: (obss, actions, rtgs, timesteps)
+
+    Note over Code: ✅ RTG 계산 과정 이해!
+```
 
 **읽을 파일**: `atari/create_dataset.py`
 
