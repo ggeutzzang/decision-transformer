@@ -7,16 +7,54 @@
 
 ## 학습 로드맵 개요
 
-```
-Phase 1: 배경 지식 (1-2일)
-    ↓
-Phase 2: 핵심 개념 이해 (2-3일)
-    ↓
-Phase 3: Gym 환경 실습 (3-4일)
-    ↓
-Phase 4: Atari 환경 실습 (3-4일)
-    ↓
-Phase 5: 심화 학습 (선택)
+```mermaid
+flowchart TB
+    subgraph Phase1["Phase 1: 배경 지식"]
+        direction LR
+        P1RL["RL 기초<br/>1-2일"]
+        P1TF["Transformer 기초<br/>1-2일"]
+        P1TS["Timestep 개념<br/>핵심!"]
+    end
+
+    subgraph Phase2["Phase 2: 핵심 개념"]
+        direction LR
+        P2Paper["논문 읽기"]
+        P2RTG["RTG 개념"]
+        P2Seq["시퀀스 구성"]
+    end
+
+    subgraph Phase3["Phase 3: Gym 실습"]
+        direction LR
+        P3Setup["환경 설정"]
+        P3Data["데이터 탐색"]
+        P3Model["모델 코드"]
+        P3Train["학습 실행"]
+    end
+
+    subgraph Phase4["Phase 4: Atari 실습"]
+        direction LR
+        P4Setup["환경 설정"]
+        P4CNN["CNN 이해"]
+        P4Train["학습 실행"]
+        P4Compare["DT vs BC"]
+    end
+
+    subgraph Phase5["Phase 5: 심화"]
+        direction LR
+        P5Exp["하이퍼파라미터<br/>실험"]
+        P5Read["논문 심화"]
+        P5Custom["커스텀 환경"]
+    end
+
+    Phase1 --> Phase2 --> Phase3 --> Phase4 --> Phase5
+
+    style Phase1 fill:#e3f2fd
+    style Phase2 fill:#fff3e0
+    style Phase3 fill:#e8f5e9
+    style Phase4 fill:#ffebee
+    style Phase5 fill:#f3e5f5
+    style P1TS fill:#ffccbc
+    style P2RTG fill:#ffccbc
 ```
 
 ---
@@ -70,6 +108,36 @@ Phase 5: 심화 학습 (선택)
 ```
 
 ### 1.3 Timestep의 의미 (중요!)
+
+```mermaid
+flowchart TB
+    subgraph GPT["GPT의 Positional Encoding"]
+        GToken["토큰 시퀀스"]
+        GPos["위치 임베딩"]
+        GMean["시퀀스 내 순서"]
+    end
+
+    subgraph DT["Decision Transformer의 Timestep"]
+        DToken["(R, s, a) 트리플"]
+        DEpi["에피소드 내 시간"]
+        DMean["에피소드 내 절대 시점"]
+    end
+
+    subgraph Example["DT 시퀀스 예시"]
+        ESeq["시퀀스: [R₀, s₀, a₀, R₁, s₁, a₁, R₂, s₂, a₂]"]
+        ETStep["timestep:   0    0    0    1    1    1    2    2    2"]
+        EGroup["           └─ 같은 시점 ─┘  └─ 같은 시점 ─┘"]
+    end
+
+    GToken --> GPos --> GMean
+    DToken --> DEpi --> DMean
+    Example
+
+    style GPT fill:#e3f2fd
+    style DT fill:#c8e6c9
+    style Example fill:#fff3e0
+    style ETStep fill:#ffccbc
+```
 
 Decision Transformer에서 **timestep**은 두 가지 맥락에서 사용됩니다:
 
@@ -139,6 +207,37 @@ returns_embeddings = returns_embeddings + time_embeddings
 
 **읽을 문서**: [architecture-flow.md](./architecture-flow.md) - "RTG 계산 세부 과정" 섹션
 
+```mermaid
+flowchart LR
+    subgraph Rewards["보상 시퀀스"]
+        R0["t=0: reward=1"]
+        R1["t=1: reward=2"]
+        R2["t=2: reward=3"]
+        R3["t=3: reward=4"]
+    end
+
+    subgraph RTGs["RTG 계산 (후방 누적합)"]
+        RT0["RTG[0] = 1+2+3+4 = 10"]
+        RT1["RTG[1] = 2+3+4 = 9"]
+        RT2["RTG[2] = 3+4 = 7"]
+        RT3["RTG[3] = 4"]
+    end
+
+    R0 --> RT0
+    R1 --> RT1
+    R2 --> RT2
+    R3 --> RT3
+
+    RT0 -.->|"미래 보상의 합"| RT1
+    RT1 -.-> RT2
+    RT2 -.-> RT3
+
+    style RT0 fill:#ff6b6b
+    style RT1 fill:#ee5a6f
+    style RT2 fill:#c44569
+    style RT3 fill:#a73e5c
+```
+
 **핵심 개념**:
 ```
 시점:     t=0    t=1    t=2    t=3
@@ -170,6 +269,44 @@ print("RTG:", rtg)
 ### 2.3 시퀀스 구성 이해
 
 **목표**: (R, s, a) 트리플의 시퀀스 구성 방식 이해
+
+```mermaid
+flowchart LR
+    subgraph Input["입력 시퀀스"]
+        R0["R₀"] --> S0["s₀"] --> A0["a₀"]
+        A0 --> R1["R₁"] --> S1["s₁"] --> A1["a₁"]
+        A1 --> R2["R₂"] --> S2["s₂"] --> A2["a₂"]
+    end
+
+    subgraph Output["출력 (예측 위치)"]
+        O0["  "]
+        O1["→a₀"]
+        O2["  "]
+        O3["  "]
+        O4["→a₁"]
+        O5["  "]
+        O6["  "]
+        O7["→a₂"]
+        O8["  "]
+    end
+
+    R0 -.-> O0
+    S0 -.-> O1
+    A0 -.-> O2
+    R1 -.-> O3
+    S1 -.-> O4
+    A1 -.-> O5
+    R2 -.-> O6
+    S2 -.-> O7
+    A2 -.-> O8
+
+    style S0 fill:#c8e6c9
+    style S1 fill:#c8e6c9
+    style S2 fill:#c8e6c9
+    style O1 fill:#4ecdc4
+    style O4 fill:#4ecdc4
+    style O7 fill:#4ecdc4
+```
 
 **핵심 개념**:
 ```
@@ -204,6 +341,39 @@ print("예측 위치 (1::3):", sequence[1::3])
 ---
 
 ## Phase 3: Gym 환경 실습
+
+```mermaid
+flowchart TD
+    subgraph Setup["환경 설정"]
+        S1["conda env create"]
+        S2["D4RL 설치"]
+        S3["데이터셋 다운로드"]
+    end
+
+    subgraph Explore["데이터 탐색"]
+        E1["D4RL 구조 확인"]
+        E2["State/Action/Reward<br/>shape 이해"]
+    end
+
+    subgraph Model["모델 학습"]
+        M1["DecisionTransformer<br/>클래스 분석"]
+        M2["forward 함수<br/>이해"]
+        M3["get_action 함수<br/>이해"]
+    end
+
+    subgraph Train["학습 실행"]
+        T1["experiment.py 실행"]
+        T2["학습 과정 관찰"]
+        T3["평가 결과 확인"]
+    end
+
+    Setup --> Explore --> Model --> Train
+
+    style Setup fill:#e8f5e9
+    style Explore fill:#c8e6c9
+    style Model fill:#a5d6a7
+    style Train fill:#81c784
+```
 
 Gym 환경이 더 단순하므로 먼저 학습합니다.
 
@@ -383,6 +553,39 @@ for i, reward in enumerate(rewards):
 
 ## Phase 4: Atari 환경 실습
 
+```mermaid
+flowchart TD
+    subgraph Setup["환경 설정"]
+        S1["conda env create"]
+        S2["gsutil 설치"]
+        S3["DQN 버퍼 다운로드"]
+    end
+
+    subgraph Data["데이터 이해"]
+        D1["create_dataset.py<br/>분석"]
+        D2["RTG 계산 과정<br/>이해"]
+    end
+
+    subgraph Model["모델 이해"]
+        M1["CNN Encoder<br/>(4×84×84 → 128)"]
+        M2["GPT 구조<br/>(6 layers, 8 heads)"]
+        M3["reward_conditioned<br/>vs naive"]
+    end
+
+    subgraph Train["학습 및 평가"]
+        T1["run_dt_atari.py 실행"]
+        T2["get_returns()로<br/>실제 게임 평가"]
+        T3["RTG 업데이트<br/>관찰"]
+    end
+
+    Setup --> Data --> Model --> Train
+
+    style Setup fill:#ffebee
+    style Data fill:#ef9a9a
+    style Model fill:#e57373
+    style Train fill:#ef5350
+```
+
 ### 4.1 환경 설정
 
 ```bash
@@ -499,6 +702,28 @@ python run_dt_atari.py \
 ### 4.5 Reward-Conditioned vs Naive 비교
 
 **목표**: 두 모드의 차이 이해
+
+```mermaid
+flowchart TB
+    subgraph DT["Reward-Conditioned (Decision Transformer)"]
+        DTSeq["시퀀스: [R, s, a, R, s, a, ...]"]
+        DTCond["RTG로 목표 지정"]
+        DTPred["State 위치(1::3)에서 예측"]
+        DTUse["원하는 성능 달성"]
+    end
+
+    subgraph BC["Naive (Behavior Cloning)"]
+        BCSeq["시퀀스: [s, a, s, a, ...]"]
+        BCCond["조건화 없음"]
+        BCPred["State 위치(0::2)에서 예측"]
+        BCUse["평균적 행동 모방"]
+    end
+
+    style DT fill:#c8e6c9
+    style DTCond fill:#4ecdc4
+    style BC fill:#fff3e0
+    style BCCond fill:#ffccbc
+```
 
 | 항목 | Reward-Conditioned | Naive |
 |-----|-------------------|-------|

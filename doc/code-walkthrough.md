@@ -12,6 +12,52 @@
 
 ---
 
+## 전체 코드 실행 흐름 개요
+
+```mermaid
+flowchart TB
+    subgraph Entry["📥 진입점"]
+        Run["run_dt_atari.py<br/>메인 스크립트"]
+    end
+
+    subgraph Data["📊 데이터 준비"]
+        Create["create_dataset.py<br/>DQN 버퍼 → RTG 데이터셋"]
+        Dataset["StateActionReturnDataset<br/>배치 샘플링"]
+    end
+
+    subgraph Model["🧠 모델"]
+        GPT["model_atari.py<br/>GPT + CNN Encoder"]
+        Config["GPTConfig<br/>하이퍼파라미터"]
+    end
+
+    subgraph Train["🎯 학습"]
+        Trainer["trainer_atari.py<br/>Train/Eval 루프"]
+        Optim["AdamW + LR Decay"]
+    end
+
+    subgraph Eval["📈 평가"]
+        Sample["utils.py/sample<br/>Action 샘플링"]
+        Env["Atari Environment<br/>실제 게임 실행"]
+    end
+
+    Run --> Create
+    Create --> Dataset
+    Dataset --> Config
+    Config --> GPT
+    GPT --> Trainer
+    Trainer --> Optim
+    Optim --> Trainer
+    Trainer --> Sample
+    Sample --> Env
+
+    style Run fill:#e3f2fd
+    style GPT fill:#ff6b6b
+    style Trainer fill:#4ecdc4
+    style Sample fill:#ffd93d
+```
+
+---
+
 ## 1. 메인 실행 흐름
 
 **파일:** `atari/run_dt_atari.py`
@@ -227,6 +273,35 @@ def create_dataset(num_buffers, num_steps, game, data_dir_prefix, trajectories_p
 
 ### 2.2 Return-to-Go (RTG) 계산 - 핵심!
 
+```mermaid
+flowchart LR
+    subgraph Input["입력: stepwise_returns"]
+        R0["r[0]=1"]
+        R1["r[1]=2"]
+        R2["r[2]=3"]
+        R3["r[3]=4"]
+    end
+
+    subgraph Process["역방향 누적합 계산"]
+        Direction["역순 순회<br/>for j in range(i-1, start_index-1, -1)"]
+        Cumsum["sum(rtg_j)"]
+    end
+
+    subgraph Output["출력: rtg 배열"]
+        RTG0["rtg[0]=10<br/>1+2+3+4"]
+        RTG1["rtg[1]=9<br/>2+3+4"]
+        RTG2["rtg[2]=7<br/>3+4"]
+        RTG3["rtg[3]=4<br/>4"]
+    end
+
+    Input --> Direction --> Cumsum --> Output
+
+    style RTG0 fill:#ff6b6b
+    style RTG1 fill:#ee5a6f
+    style RTG2 fill:#c44569
+    style RTG3 fill:#a73e5c
+```
+
 ```python
 # RTG 계산: 각 타임스텝에서 에피소드 끝까지의 누적 보상
 start_index = 0
@@ -427,6 +502,54 @@ class GPT(nn.Module):
 ```
 
 ### 3.5 Forward Pass - 핵심!
+
+```mermaid
+flowchart TD
+    subgraph Input["📥 입력"]
+        S["states<br/>(batch, block_size, 4×84×84)"]
+        A["actions<br/>(batch, block_size, 1)"]
+        R["rtgs<br/>(batch, block_size, 1)"]
+        T["timesteps<br/>(batch, 1, 1)"]
+    end
+
+    subgraph Encode["1️⃣ 임베딩"]
+        S --> SE["state_encoder<br/>CNN → 128dim"]
+        R --> RE["ret_emb<br/>Linear → 128dim"]
+        A --> AE["action_embeddings<br/>Embedding → 128dim"]
+    end
+
+    subgraph Interleave["2️⃣ 시퀀스 구성"]
+        SE --> Stack["token_embeddings"]
+        RE --> Stack
+        AE --> Stack
+        Stack -->|"reward_conditioned<br/>[R,s,a,R,s,a,...]"| Seq1
+        Stack -->|"naive<br/>[s,a,s,a,...]"| Seq2
+    end
+
+    subgraph PosEmbed["3️⃣ 위치 임베딩"]
+        Seq1 --> Add["+ position_embeddings"]
+        Seq2 --> Add
+        T --> Global["global_pos_emb"]
+        Global --> Add
+        Add --> Dropout
+    end
+
+    subgraph Transformer["4️⃣ Transformer"]
+        Dropout --> Blocks["6× Block<br/>Attention + MLP"]
+        Blocks --> LN["LayerNorm"]
+        LN --> Head["Linear Head<br/>→ vocab_size"]
+    end
+
+    subgraph Extract["5️⃣ 예측 추출"]
+        Head --> Slice1["reward_conditioned<br/>logits[:, 1::3, :]"]
+        Head --> Slice2["naive<br/>logits[:, ::2, :]"]
+    end
+
+    style Encode fill:#e3f2fd
+    style Interleave fill:#fff3e0
+    style Transformer fill:#c8e6c9
+    style Extract fill:#ffccbc
+```
 
 ```python
 def forward(self, states, actions, targets=None, rtgs=None, timesteps=None):
@@ -660,6 +783,35 @@ def train(self):
 ## 5. 평가 및 샘플링
 
 ### 5.1 평가 함수 - get_returns
+
+```mermaid
+flowchart TD
+    Start([get_returns 호출]) --> InitEnv["Env 초기화<br/>Atari 게임"]
+    InitEnv --> InitRTG["rtgs = [target_return]<br/>예: 90 for Breakout"]
+    InitRTG --> FirstSample["sample()로 첫 action 예측"]
+
+    FirstSample --> EpisodeLoop["10 에피소드 반복"]
+    EpisodeLoop --> Reset["env.reset()"]
+    Reset --> StepLoop{Step Loop}
+
+    StepLoop -->|Not Done| ExecAction["env.step(action)"]
+    ExecAction --> GetReward["reward 획득"]
+    GetReward --> UpdateRTG["rtgs += [rtgs[-1] - reward]<br/>⭐ 핵심!"]
+    UpdateRTG --> ConcatStates["all_states에 state 추가"]
+    ConcatStates --> NextSample["sample()로 다음 action 예측"]
+    NextSample --> StepLoop
+
+    StepLoop -->|Done| AppendReturn["T_rewards.append(reward_sum)"]
+    AppendReturn --> MoreEpisodes{더 많은<br/>에피소드?}
+    MoreEpisodes -->|Yes| EpisodeLoop
+    MoreEpisodes -->|No| CalcMean["eval_return = mean(T_rewards)"]
+    CalcMean --> Print["print: target vs eval return"]
+    Print --> End([return eval_return])
+
+    style UpdateRTG fill:#ff6b6b
+    style NextSample fill:#4ecdc4
+    style CalcMean fill:#ffd93d
+```
 
 ```python
 def get_returns(self, ret):

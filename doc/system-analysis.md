@@ -18,6 +18,38 @@
 
 ## 1. 개요
 
+```mermaid
+flowchart TB
+    subgraph Traditional["🔄 기존 RL"]
+        TBellman["Bellman Equation"]
+        TValue["Value Function"]
+        TPolicy["Policy Optimization"]
+        TBellman --> TValue
+        TValue --> TPolicy
+    end
+
+    subgraph DT["🤖 Decision Transformer"]
+        DSeq["Sequence Modeling"]
+        DGPT["GPT Architecture"]
+        DRTG["Return-to-Go Conditioning"]
+        DSeq --> DGPT
+        DGPT --> DRTG
+    end
+
+    Traditional -.->|"패러다임 전환"| DT
+
+    style Traditional fill:#ffebee
+    style DT fill:#e8f5e9
+```
+
+Decision Transformer는 강화학습(RL)을 **시퀀스 모델링 문제**로 재구성한 연구입니다. 기존 RL의 벨만 방정식(Bellman equation) 기반 접근법 대신, GPT 아키텍처를 사용하여 (Return-to-go, State, Action) 시퀀스를 autoregressive하게 모델링합니다.
+
+**핵심 아이디어**: 원하는 return(목표 보상)을 조건으로 주면, 해당 return을 달성할 수 있는 action을 예측
+
+---
+
+## 1. 개요
+
 Decision Transformer는 강화학습(RL)을 **시퀀스 모델링 문제**로 재구성한 연구입니다. 기존 RL의 벨만 방정식(Bellman equation) 기반 접근법 대신, GPT 아키텍처를 사용하여 (Return-to-go, State, Action) 시퀀스를 autoregressive하게 모델링합니다.
 
 **핵심 아이디어**: 원하는 return(목표 보상)을 조건으로 주면, 해당 return을 달성할 수 있는 action을 예측
@@ -25,6 +57,36 @@ Decision Transformer는 강화학습(RL)을 **시퀀스 모델링 문제**로 �
 ---
 
 ## 2. 핵심 모델 컴포넌트
+
+```mermaid
+flowchart TB
+    subgraph Base["TrajectoryModel (추상 베이스)"]
+        direction TB
+        BaseClass["TrajectoryModel"]
+        BaseForward["forward(states, actions, ...)<br/>추상 메서드"]
+    end
+
+    subgraph DT["Decision Transformer"]
+        direction TB
+        DTClass["DecisionTransformer"]
+        DTForward["forward()"]
+        GetAction["get_action()<br/>추론용"]
+    end
+
+    subgraph BC["Behavior Cloning"]
+        direction TB
+        BCClass["MLPBCModel"]
+        BCForward["forward()"]
+    end
+
+    Base --> DT
+    Base --> BC
+
+    style Base fill:#e3f2fd
+    style DT fill:#c8e6c9
+    style BC fill:#fff3e0
+    style GetAction fill:#ffccbc
+```
 
 ### 2.1 Gym 환경: DecisionTransformer
 
@@ -106,6 +168,31 @@ TrajectoryModel (추상 베이스)
 
 ## 3. 데이터 처리 파이프라인
 
+```mermaid
+flowchart TB
+    subgraph AtariData["🎮 Atari 데이터"]
+        DQN["DQN Replay Buffers<br/>(50 checkpoints)"]
+        Sample["궤적 샘플링<br/>FixedReplayBuffer"]
+        RTG["RTG 계산<br/>후방 누적합"]
+        AtariDS["StateActionReturnDataset"]
+    end
+
+    subgraph GymData["🤸 Gym 데이터"]
+        D4RL["D4RL Pickle<br/>trajectories"]
+        Norm["State 정규화<br/>mean, std"]
+        Batch["get_batch()<br/>길이 비례 샘플링"]
+        GymDS["Context K 서브시퀀스"]
+    end
+
+    DQN --> Sample --> RTG --> AtariDS
+    D4RL --> Norm --> Batch --> GymDS
+
+    style DQN fill:#fff3e0
+    style D4RL fill:#e8f5e9
+    style RTG fill:#ffccbc
+    style Batch fill:#c8e6c9
+```
+
 ### 3.1 Atari 데이터셋 생성
 
 **파일**: [create_dataset.py](../atari/create_dataset.py)
@@ -165,10 +252,32 @@ def discount_cumsum(x, gamma):
 
 ## 4. 학습 시스템
 
-### 4.1 Gym Trainer 계층
+```mermaid
+flowchart TB
+    subgraph GymTrainer["🤸 Gym Trainer"]
+        direction TB
+        Base["Trainer<br/>(베이스 클래스)"]
+        SeqTr["SequenceTrainer<br/>(DT용)"]
+        ActTr["ActTrainer<br/>(BC용)"]
+    end
 
+    subgraph Atarirainer["🎮 Atari Trainer"]
+        direction TB
+        Trainer["Trainer"]
+        RunEpoch["run_epoch()<br/>DataLoader 기반"]
+        LRDecay["Cosine LR + Warmup"]
+    end
+
+    Base --> SeqTr
+    Base --> ActTr
+    Trainer --> RunEpoch --> LRDecay
+
+    style SeqTr fill:#c8e6c9
+    style ActTr fill:#fff3e0
+    style LRDecay fill:#ffccbc
 ```
-Trainer (베이스 클래스)
+
+### 4.1 Gym Trainer 계층
     ├── train_iteration(): 에폭 단위 학습
     ├── train_step(): 서브클래스에서 오버라이드
     └── eval_fns: 평가 함수 리스트
@@ -217,6 +326,28 @@ else:
 
 ## 5. 평가 시스템
 
+```mermaid
+flowchart TD
+    subgraph GymEval["🤸 Gym 평가"]
+        RTGMode["evaluate_episode_rtg<br/>(DT용)"]
+        StdMode["evaluate_episode<br/>(BC용)"]
+        Update["RTG 업데이트<br/>target_return -= reward/scale"]
+    end
+
+    subgraph AtariEval["🎮 Atari 평가"]
+        GetReturns["get_returns(target)"]
+        SampleFunc["sample() 함수"]
+        EnvRun["실제 게임 실행<br/>atari_py"]
+    end
+
+    RTGMode --> Update
+    GetReturns --> SampleFunc --> EnvRun
+
+    style RTGMode fill:#c8e6c9
+    style StdMode fill:#fff3e0
+    style Update fill:#ffccbc
+```
+
 ### 5.1 Gym 평가
 
 **파일**: [evaluate_episodes.py](../gym/decision_transformer/evaluation/evaluate_episodes.py)
@@ -252,6 +383,43 @@ target_return = torch.cat([target_return, pred_return.reshape(1, 1)], dim=1)
 ---
 
 ## 6. 전체 실행 흐름
+
+```mermaid
+flowchart TD
+    subgraph GymFlow["🤸 Gym 실행 흐름"]
+        GStart["python experiment.py"]
+        GEnv["환경 설정<br/>env_targets, scale"]
+        GData["D4RL 데이터 로드<br/>정규화"]
+        GModel["DecisionTransformer<br/>초기화"]
+        GTrainer["SequenceTrainer<br/>초기화"]
+        GLoop["Training Loop<br/>iter ∈ max_iters"]
+        GBatch["get_batch()"]
+        GForward["forward → MSE loss"]
+        GEval["evaluate_episode_rtg<br/>(target)"]
+    end
+
+    subgraph AtariFlow["🎮 Atari 실행 흐름"]
+        AStart["python run_dt_atari.py"]
+        AData["create_dataset()<br/>DQN 버퍼 → RTG"]
+        ADS["StateActionReturnDataset"]
+        AModel["GPT 모델<br/>(6 layers, 8 heads)"]
+        ATrainer["Trainer.train()"]
+        AEpoch["for epoch in epochs"]
+        ATrain["run_epoch('train')"]
+        AGetRet["get_returns(target)"]
+    end
+
+    GStart --> GEnv --> GData --> GModel --> GTrainer --> GLoop
+    GLoop --> GBatch --> GForward --> GEval --> GLoop
+
+    AStart --> AData --> ADS --> AModel --> ATrainer --> AEpoch
+    AEpoch --> ATrain --> AGetRet --> AEpoch
+
+    style GData fill:#e8f5e9
+    style AData fill:#fff3e0
+    style GEval fill:#c8e6c9
+    style AGetRet fill:#ffccbc
+```
 
 ### 6.1 Gym 실행 흐름
 
@@ -369,6 +537,60 @@ python run_dt_atari.py --game Breakout --model_type reward_conditioned
 ---
 
 ## 9. 파일 구조 요약
+
+```mermaid
+flowchart TB
+    subgraph Root["📁 decision-transformer/"]
+        direction TB
+
+        subgraph AtariDir["🎮 atari/"]
+            direction TB
+            AMain["run_dt_atari.py<br/>메인 진입점"]
+            AData["create_dataset.py<br/>데이터셋 생성"]
+            ABuffer["fixed_replay_buffer.py<br/>버퍼 래퍼"]
+            subgraph AMingpt["mingpt/"]
+                AModel["model_atari.py<br/>GPT + CNN"]
+                ATrainer["trainer_atari.py<br/>학습+평가"]
+                AUtils["utils.py<br/>샘플링"]
+            end
+        end
+
+        subgraph GymDir["🤸 gym/"]
+            direction TB
+            GExp["experiment.py<br/>메인 진입점"]
+            subgraph GDT["decision_transformer/"]
+                direction TB
+                subgraph GModels["models/"]
+                    GDTMain["decision_transformer.py<br/>핵심 DT 모델"]
+                    GGPT2["trajectory_gpt2.py<br/>커스텀 GPT-2"]
+                    GBase["model.py<br/>TrajectoryModel"]
+                    GBC["mlp_bc.py<br/>BC 베이스라인"]
+                end
+                subgraph GTrain["training/"]
+                    GTrainer["trainer.py<br/>베이스"]
+                    GSeq["seq_trainer.py<br/>DT용"]
+                    GAct["act_trainer.py<br/>BC용"]
+                end
+                subgraph GEval["evaluation/"]
+                    GEvalEp["evaluate_episodes.py<br/>RTG 조건부 평가"]
+                end
+            end
+        end
+
+        subgraph DocDir["📚 doc/"]
+            DArch["architecture-flow.md"]
+            DCode["code-walkthrough.md"]
+            DSys["system-analysis.md"]
+            DPlan["learning-plan.md"]
+        end
+    end
+
+    style AtariDir fill:#fff3e0
+    style GymDir fill:#e8f5e9
+    style DocDir fill:#e3f2fd
+    style GDTMain fill:#c8e6c9
+    style AModel fill:#ffccbc
+```
 
 ```
 decision-transformer/
